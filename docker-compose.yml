@@ -1,0 +1,118 @@
+version: '3'
+
+networks:
+    docker-network:
+        name: ${COMPOSE_PROJECT_NAME:-php8docker}
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: configs/nginx.dockerfile
+    ports:
+      - ${PORT_HTTP:-80}:80
+      - ${PORT_HTTPS:-443}:443
+    environment:
+      ROOT: ${WEB_ROOT:-/}
+      HOST: ${WEB_HOST:-localhost}
+      LISTEN_443: ${SSL_LISTEN_443}
+      FULLCHAIN: ${SSL_FULLCHAIN}
+      PRIVKEY: ${SSL_PRIVKEY}
+    volumes:
+      - ./src:/var/www/html:delegated
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/conf:/var/log/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+    depends_on:
+      - php
+      - redis
+      - mysql
+    networks:
+      - docker-network
+
+  mysql:
+    image: mysql:${VERSION_MYSQL:-5.7.32}
+    restart: unless-stopped
+    tty: true
+    user: 1000:1000
+    volumes: 
+      - ./data/mysql:/var/lib/mysql
+    ports:
+      - ${PORT_MYSQL:-3306}:3306
+    environment:
+      MYSQL_DATABASE: db_name
+      MYSQL_USER: db_user 
+      MYSQL_PASSWORD: db_pass 
+      MYSQL_ROOT_PASSWORD: db_pass 
+      SERVICE_TAGS: dev
+      SERVICE_NAME: mysql
+    networks:
+      - docker-network
+
+  php:
+    build:
+      context: .
+      dockerfile: configs/php.dockerfile
+    volumes:
+      - ./src:/var/www/html:delegated
+    networks:
+      - docker-network
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    ports:
+      - ${PORT_REDIS:-6379}:6379
+    networks:
+      - docker-network
+    volumes:
+            - ./data/redis:/data
+
+  composer:
+    image: composer:latest
+    user: 1000:1000
+    volumes:
+      - ./src:/var/www/html
+    working_dir: /var/www/html
+    depends_on:
+      - php  
+    entrypoint: ['composer']
+    networks:
+      - docker-network
+
+  npm:
+    image: node:${VERSION_NPM:-13.7}
+    volumes:
+      - ./src:/var/www/html
+    ports:
+      - ${PORT_NPM1:-3000}:3000
+      - ${PORT_NPM2:-3001}:3001
+    working_dir: /var/www/html
+    entrypoint: ['npm']
+    networks:
+      - docker-network
+
+  artisan:
+    build:
+      context: .
+      dockerfile: configs/php.dockerfile
+    user: 1000:1000
+    volumes:
+      - ./src:/var/www/html:delegated
+    depends_on:
+      - php
+      - mysql
+    working_dir: /var/www/html
+    entrypoint: ['php', '/var/www/html/artisan']
+    networks:
+      - docker-network
+
+  certbot:
+    image: certbot/certbot
+    user: 1000:1000
+    volumes:
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/conf:/var/log/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+    networks:
+      - docker-network
